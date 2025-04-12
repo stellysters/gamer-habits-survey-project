@@ -1,0 +1,944 @@
+---
+title: "Video Game Player Habits"
+author: "Stella Bazaldua"
+date: "2024-04-11"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+###############################
+# Clear workspace
+###############################
+rm(list = ls())
+###########################################################
+# Set the seed. 
+###########################################################
+set.seed(4428967)
+###########################################################
+# Set the working directory.
+###########################################################
+setwd("C:\\Users\\Stella\\Documents\\TAMUStatistics\\Stat656\\GroupProject")
+###########################################################
+###########################################################
+# Load the libraries
+###########################################################
+library(gamm4)
+library(reshape2)
+library(dplyr)
+library(plyr)
+###########################################################
+# Pull in data and name and gather all of the values
+# that will be used throughout the assignment.
+###########################################################
+playerData = read.csv(file='data_640_validated.csv', na.strings = c("", " "))
+```
+
+Let's look at the data structures
+
+```{r}
+str(playerData)
+```
+
+And also let's look for any missing data
+
+```{r, fig.width=17, fig.height=8}
+anyNA(playerData)
+
+#install.packages("reshape2")
+ggplot_missing <- function(x){
+    if(!require(reshape2)){warning('you need to install reshape2')}
+    require(reshape2)
+    require(ggplot2)
+    #### This function produces a plot of the missing data pattern
+    #### in x.  It is a modified version of a function in the 'neato' package
+
+  x %>% 
+    is.na %>%
+    melt %>%
+    ggplot(data = .,
+           aes(x = Var2,
+               y = Var1)) +
+    geom_raster(aes(fill = value)) +
+    scale_fill_grey(name = "",
+                    labels = c("Present","Missing")) +
+    theme_minimal() + 
+    theme(axis.text.x  = element_text(angle=45, vjust=1, hjust=1)) + 
+    labs(x = "Variables in Dataset",
+         y = "Rows / observations")
+}
+ggplot_missing(playerData)
+```
+
+There appears to be missing data for columns C15, D1 and D7 so let's try and find some more specifics on the data.
+
+```{r}
+# Count missing values in each column
+missing_counts <- colSums(is.na(playerData))
+
+# Print column names and missing value counts
+print(missing_counts[missing_counts > 0])
+
+# There are only 12 rows with  missing data so for now we can drop these 
+playerData <- playerData[!is.na(playerData$D1),]
+playerData <- playerData[!is.na(playerData$D2),]
+playerData <- playerData[!is.na(playerData$D3),]
+
+#check for missing data again
+# Count missing values in each column
+missing_counts <- colSums(is.na(playerData))
+
+# Print column names and missing value counts
+print(missing_counts[missing_counts > 0])
+```
+
+Treat the qualitative variables we will be using as factors in our analyis, sections C and E.
+
+```{R qualToFactor}
+
+# Section C 
+(variablesWithStatus = grep('^(C|E)',names(playerData), value=TRUE))
+length(variablesWithStatus)
+
+#dplyr has functionality for doing just this as well, using regex under the hood
+segDataFactor        = mutate_at(playerData,vars(starts_with(c('C','E'))), as.factor)
+
+str(segDataFactor)
+```
+
+Correlation matrix to look for any correlated features from section C,
+
+```{r}
+# Select the numeric variables for correlation analysis
+numeric_vars <- playerData[, c("C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10",
+                               "C11", "C12", "C13", "C14", "C15", "E1", "E2", "E3", "E4", "E5",
+                               "E6", "E7", "E8", "E9", "E10", "E11", "E12", "E13", "E14", "E15",
+                               "E16", "E17", "E18", "E19", "E20", "E21", "E22", "E23", "E24", "E25",
+                               "E26", "E27", "E28")]
+
+# Compute the correlation matrix
+cor_matrix <- cor(numeric_vars)
+
+# Print the correlation matrix
+print(cor_matrix)
+
+require(corrplot)
+corrplot(cor_matrix, tl.cex = 0.5)
+
+```
+
+Implement Lasso with target variable E17
+
+\
+![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABoAAAAaCAYAAACpSkzOAAAD3UlEQVR42mNgIBKoqJjzqWgbailr6zuqa+s5aejrqzGEhjIzUBuALLl58/b2r9++ffn2/fuPo8eOzVTUNJSnyFBFHR1xFRUVdrgA0OWu3n5+QAt+/vj58z8Iv37z5paqlp45sj4pY2MuIMVI0AI9PT1uDX1jt7UbNzanZOVGKmkaqII0Kuvpia1Zt6ERZgkIf//x44+Dm5cPyBEgfWq6xhqVNXWJ+maW7pqaxpJ4LVLVMdK8euPGepBBwCD6uv/w4Sk6xuZualr6NvcfPjyEbBEIz5w7txgUV16BIf6Xr11bD7T874vXr69kFRRHgxyH1RIlY2P+iZOn5aIb9ubduwcfPn58ji4Owl++fv1w6crVVR8/f36DLP7k2bOzKnp6Rrg8xGhibe2Jy1BS8PMXLy6p6xia4Aw6DQMDhd179/VRYgkw+H43tXemKWiZSuCLJpivXpBr0YVLl1eq6+mp47RBQcGBQ0nLWM7I0sbj/YcPT7AZ8u79h0e3bt/dBYyDUyCXY1MzZ96CEhVDQ1EZS0tOLS0tNnhyl9PVFVTXMdLLKSqJOXj46FRQ+GIx4B9IDpT0VbT0tUERDQqej58+vUJX+/jJk1ONbW2pRaVVcTFJqWEgh4NKFQaQJfcePDiALzhAJQKoZEDOjMDgUZy/cHE5oaC8efv2NrBeNT1DZ1CRgk/x/MVLyzU0zIQxEg/Qh0C93/DpBebHb6DykQFUQBJSPHXmzEIFAwMBjPJP19D+85cv7/HpffbixXllXSNjBlAxs3Lt2vq79x/sAxWY2BSfOnN2vrK2kQqyJerqhlIdvb2ZuCwAOQBUmkyfM68QVHZCXAZMJRq6urom1k6ee/bun4DF+59BEQxKtqByDBQ/oEL25evXN9DV3r//YG99a3sKKFhB8a+trS2ELZUzgRRg8xkoHq9cu7Zu89bt7SdOnp77/uPHZ9h8EpeSHo4tmFHLO2A+mrdoURklJUNpVW0CtoQDBw4ODizWdo5ewMz6mBKLHj5+fFRN21Afbzl39OTJ2ZQWqODssGRZBU5fgYLt0OGj09Dj5czZ80uu37ixCcj+hW4gKJ5u3rq1FV0OJAbN4FgBE6iSAxWKwOz7DxQEoAoMVLGBihxQHYNsGLAqvw0uXoAGglIksN66DbYcGPSgokddXZ0XZ/CBCkJQlZyeWxAJCmeY91V1dZVOnzm3ENkiYIW3GtwSAgI1fX1pUNYAlSCg0h8UOkQ1TkAlOTIflBfQy7WVa9c3oFXXTFCHMZLfLIK2gkAlOyg+gBn1akhUbJCxsTEr1dt1oBoTVD2DCmFgY8WMYEsHDQAAEK8m0dYP6qQAAAAASUVORK5CYII= "Modify Chunk Options")![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABoAAAAaCAYAAACpSkzOAAABAklEQVR42mNgGAVDCqxdvzVhzcbNm6mBK6uqVuO06P///4xr128pptSSmtrarSCz8Ppq//79LGs3bGkl15K6hsZ9IDOICsJFO3dyr1m/tZdUS+obGw+D9JIUX6tW7eZfs2HLLGItaWxqPQXSQ17iWLtDEhiMSwhZ0tzceh6klqKUuGrjdvU1G7esxGVJU0vbJZAaqiT7NRs36q3ZsHU9hiWtbVdBclTNY6vXb3YAWrYJHlyt7ddAYrTJ0Bs2h0B80n4dxB4t4lAA4yK/zdTAhC1a4LOZYZsnRRhsBkGLZntRbhHIDIIWTfek3CKQGQQtmuxGuUUgMwiCPpfNVMGjYMgBAEpfBd1AknheAAAAAElFTkSuQmCC "Run All Chunks Above")![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAaCAYAAADFTB7LAAAAa0lEQVR42u3OywnAIBBAwcXSUoCW5D11xDoNCBGNv0MOecJOBSOi1OZMsJ4dvFxEJ1OQnMxBarIKEpNNkJbsBknJYZCSnAYJyVVQziNig7/nZkFEbhTE5HpBVO4dxOXKIDL3BLG5BJ1T6rsbMfep2CaMN00AAAAASUVORK5CYII= "Run Current Chunk")
+
+```{r, lasso}
+require(glmnet)
+
+set.seed(1)
+
+# Prepare the feature matrix X
+X <- model.matrix(~ C1 + C2 + C3 + C4 + C5 + C6 + C7 + C8 + C9 + C10 +
+                    C11 + C12 + C13 + C14 + C15 - 1, data = playerData)
+
+# Prepare the target variable y
+y <- playerData$E17
+
+# Convert the target variable to a factor if it's not already
+y <- as.factor(y)
+
+# Split the data into training and testing sets
+train_indices <- sample(1:nrow(X), 0.7 * nrow(X))
+X_train <- X[train_indices, ]
+X_test <- X[-train_indices, ]
+y_train <- y[train_indices]
+y_test <- y[-train_indices]
+
+# Perform multinomial LASSO
+lasso_model <- glmnet(X_train, y_train, alpha = 1, family = "multinomial")
+
+# Cross-validation to select the best lambda
+cv_lasso <- cv.glmnet(X_train, y_train, alpha = 1, family = "multinomial")
+best_lambda <- cv_lasso$lambda.min
+
+# Make predictions on the test set
+predictions <- predict(lasso_model, s = best_lambda, newx = X_test, type = "class")
+
+# Evaluate the model
+accuracy <- mean(predictions == y_test)
+cat("Accuracy:", accuracy, "\n")
+
+# Get the coefficients of the LASSO model
+coef_lasso <- coef(lasso_model, s = best_lambda)
+print(coef_lasso)
+
+
+plot(cv_lasso)
+```
+
+For question E17: :How often do you do the following activites with trees? [Cut down trees]
+
+1.  Accuracy:
+
+    -   The accuracy of the model is 0.3789474, which means that the model correctly predicts the class label for approximately 37.89% of the instances in the test set.
+
+    -   Accuracy is calculated as the proportion of correctly classified instances out of the total number of instances in the test set.
+
+    -   A higher accuracy indicates better performance of the model in classifying the instances into their respective categories.
+
+2.  Coefficients:
+
+    -   The coefficients are presented for each category of the target variable (E13 in this case).
+
+    -   In the output, you see four sets of coefficients, corresponding to the different categories of E13 (labeled as "1", "2", "3", and "4").
+
+    -   Each set of coefficients represents the change in the log-odds of the respective category relative to a reference category (usually the first or last category) for a unit change in the corresponding predictor variable.
+
+    -   The "(Intercept)" term represents the baseline log-odds for each category when all predictor variables are zero.
+
+    -   The coefficients with a value of "." indicate that the corresponding predictor variable has been excluded from the model for that specific category due to the LASSO regularization.
+
+3.  
+
+Interpretation of coefficients for each category:
+
+-   Category "1":
+
+    -   The intercept is 0.0264544, indicating the baseline log-odds for category "1".
+
+    -   C5 has a negative coefficient of -0.2485158, suggesting that a higher value of C5 decreases the log-odds of an instance belonging to category "1" relative to the reference category.
+
+    -   All other predictor variables have been excluded from the model for category "1".
+
+-   Category "2":
+
+    -   The intercept is 0.27054780, indicating the baseline log-odds for category "2".
+
+    -   C2 has a positive coefficient of 0.09576770, suggesting that a higher value of C2 increases the log-odds of an instance belonging to category "2" relative to the reference category.
+
+    -   C3, C8, C10, and C13 have smaller coefficients, indicating their relatively smaller impact on the log-odds of category "2".
+
+    -   Other predictor variables have been excluded from the model for category "2".
+
+-   Category "3":
+
+    -   The intercept is 0.702429280, indicating the baseline log-odds for category "3".
+
+    -   C6 has a positive coefficient of 0.085014808, suggesting that a higher value of C6 increases the log-odds of an instance belonging to category "3" relative to the reference category.
+
+    -   C2, C12, and C15 have negative coefficients, indicating that higher values of these variables decrease the log-odds of category "3".
+
+    -   Other predictor variables have been excluded from the model for category "3".
+
+-   Category "4":
+
+    -   The intercept is -0.99943148, indicating the baseline log-odds for category "4".
+
+    -   C1 and C3 have positive coefficients, suggesting that higher values of these variables increase the log-odds of an instance belonging to category "4" relative to the reference category.
+
+    -   C6 has a negative coefficient, indicating that a higher value of C6 decreases the log-odds of categor "4".
+
+    -   C11 has a small positive coefficient, indicating a relatively smaller impact on the log-odds of category "4".
+
+    -   Other predictor variables have been excluded from the model for category "4".
+
+Feature importance plot for lasso for target E17
+
+```{r}
+var_imp_list <- lapply(coef_lasso, function(class_coef) {
+  var_names <- rownames(class_coef)
+  var_coefs <- as.numeric(class_coef[, 1])
+  
+  # Remove the intercept if present
+  intercept_index <- which(var_names == "(Intercept)")
+  if (length(intercept_index) > 0) {
+    var_names <- var_names[-intercept_index]
+    var_coefs <- var_coefs[-intercept_index]
+  }
+  
+  data.frame(Variable = var_names, Coefficient = var_coefs)
+})
+
+# Combine the variable importance scores from all classes
+var_imp <- do.call(rbind, var_imp_list)
+
+# Group by variable and sum the coefficients
+var_imp <- aggregate(Coefficient ~ Variable, data = var_imp, FUN = sum)
+
+# Sort the variables by their absolute coefficient values in descending order
+var_imp <- var_imp[order(abs(var_imp$Coefficient), decreasing = TRUE), ]
+
+
+# Create a horizontal bar plot
+barplot(var_imp$Coefficient, names.arg = var_imp$Variable, 
+        xlab = "Coefficient", ylab = "Variable",
+        main = "Variable Importance Scores (LASSO)",
+        col = ifelse(var_imp$Coefficient > 0, "blue", "red"),
+        horiz = TRUE, las = 1, cex.names = 0.8)
+legend("topright", legend = c("Positive", "Negative"), 
+       fill = c("blue", "red"), cex = 0.8)
+```
+
+Let's try question E13 'How often do you do the following activities with fish or bugs? [Send it to friend as a gift]'
+
+```{r}
+set.seed(1)
+# Prepare the target variable y
+y <- playerData$E13
+
+# Convert the target variable to a factor if it's not already
+y <- as.factor(y)
+
+# Split the data into training and testing sets
+train_indices <- sample(1:nrow(X), 0.7 * nrow(X))
+X_train <- X[train_indices, ]
+X_test <- X[-train_indices, ]
+y_train <- y[train_indices]
+y_test <- y[-train_indices]
+
+# Perform multinomial LASSO
+lasso_model <- glmnet(X_train, y_train, alpha = 1, family = "multinomial")
+
+# Cross-validation to select the best lambda
+cv_lasso <- cv.glmnet(X_train, y_train, alpha = 1, family = "multinomial")
+best_lambda <- cv_lasso$lambda.min
+
+# Make predictions on the test set
+predictions <- predict(lasso_model, s = best_lambda, newx = X_test, type = "class")
+
+# Evaluate the model
+accuracy <- mean(predictions == y_test)
+cat("Accuracy:", accuracy, "\n")
+
+# Get the coefficients of the LASSO model
+coef_lasso <- coef(lasso_model, s = best_lambda)
+print(coef_lasso)
+```
+
+1.  Accuracy:
+
+    -   The accuracy of the model is 0.5368421, which means that the model correctly predicts the class label for approximately 53.68% of the instances in the test set.
+
+    -   In other words, out of all the instances in the test set, the model correctly classifies 53.68% of them into their respective categories.
+
+    -   An accuracy of 53.68% suggests that the model's performance is moderate, but there is still room for improvement. It indicates that the model is able to predict the categories with some level of accuracy based on the given predictor variables.
+
+2.  Coefficients:
+
+    -   The coefficients are presented for each category of the target variable (E13 in this case).
+
+    -   There are four sets of coefficients, corresponding to the different categories of E13 (labeled as "1", "2", "3", and "4").
+
+    -   Each set of coefficients represents the change in the log-odds of the respective category relative to a reference category (usually the first or last category) for a unit change in the corresponding predictor variable.
+
+    -   The "(Intercept)" term represents the baseline log-odds for each category when all predictor variables are zero.
+
+    -   The coefficients with a value of "." indicate that the corresponding predictor variable has been excluded from the model for that specific category due to the LASSO regularization.
+
+Interpretation of coefficients for each category:
+
+-   Category "1":
+
+    -   The intercept is -0.99864096, indicating the baseline log-odds for category "1".
+
+    -   C5, C8, C9, C10, and C14 have positive coefficients, suggesting that higher values of these variables increase the log-odds of an instance belonging to category "1" relative to the reference category.
+
+    -   C11 and C13 have negative coefficients, indicating that higher values of these variables decrease the log-odds of category "1".
+
+    -   Other predictor variables have been excluded from the model for category "1".
+
+-   Category "2":
+
+    -   The intercept is 0.37020132, indicating the baseline log-odds for category "2".
+
+    -   C2 and C8 have positive coefficients, suggesting that higher values of these variables increase the log-odds of an instance belonging to category "2" relative to the reference category.
+
+    -   C9 and C13 have negative coefficients, indicating that higher values of these variables decrease the log-odds of category "2".
+
+    -   Other predictor variables have been excluded from the model for category "2".
+
+-   Category "3":
+
+    -   The intercept is 1.61525678, indicating the baseline log-odds for category "3".
+
+    -   C13 has a positive coefficient, suggesting that a higher value of C13 increases the log-odds of an instance belonging to category "3" relative to the reference category.
+
+    -   C1, C2, C5, C8, and C10 have negative coefficients, indicating that higher values of these variables decrease the log-odds of category "3".
+
+    -   Other predictor variables have been excluded from the model for category "3".
+
+-   Category "4":
+
+    -   The intercept is -0.98681714, indicating the baseline log-odds for category "4".
+
+    -   C1, C11, and C13 have positive coefficients, suggesting that higher values of these variables increase the log-odds of an instance belonging to category "4" relative to the reference category.
+
+    -   C4, C8, and C12 have negative coefficients, indicating that higher values of these variables decrease the log-odds of category "4".
+
+    -   Other predictor variables have been excluded from the model for category "4".
+
+Overall, the results suggest that the multinomial LASSO model has a moderate accuracy of 53.68% in predicting the categories of E13 based on the given predictor variables (C1 to C15). The coefficients provide insights into the impact of each predictor variable on the log-odds of each category relative to the reference category. The model has identified some predictor variables as significant contributors to the prediction of each category, while excluding others through the LASSO regularization. However, there may still be room for improvement in terms of model accuracy and the inclusion of additional relevant variables.
+
+Feature importance plot for question E13
+
+```{r}
+var_imp_list <- lapply(coef_lasso, function(class_coef) {
+  var_names <- rownames(class_coef)
+  var_coefs <- as.numeric(class_coef[, 1])
+  
+  # Remove the intercept if present
+  intercept_index <- which(var_names == "(Intercept)")
+  if (length(intercept_index) > 0) {
+    var_names <- var_names[-intercept_index]
+    var_coefs <- var_coefs[-intercept_index]
+  }
+  
+  data.frame(Variable = var_names, Coefficient = var_coefs)
+})
+
+# Combine the variable importance scores from all classes
+var_imp <- do.call(rbind, var_imp_list)
+
+# Group by variable and sum the coefficients
+var_imp <- aggregate(Coefficient ~ Variable, data = var_imp, FUN = sum)
+
+# Sort the variables by their absolute coefficient values in descending order
+var_imp <- var_imp[order(abs(var_imp$Coefficient), decreasing = TRUE), ]
+
+
+# Create a horizontal bar plot
+barplot(var_imp$Coefficient, names.arg = var_imp$Variable, 
+        xlab = "Coefficient", ylab = "Variable",
+        main = "Variable Importance Scores (LASSO)",
+        col = ifelse(var_imp$Coefficient > 0, "blue", "red"),
+        horiz = TRUE, las = 1, cex.names = 0.8)
+legend("topright", legend = c("Positive", "Negative"), 
+       fill = c("blue", "red"), cex = 0.8)
+```
+
+Let's try question E12 How often do you do the following activities with fish or bugs? [Sell for profit]
+
+```{r}
+set.seed(1)
+# Prepare the target variable y
+y <- playerData$E12
+
+# Convert the target variable to a factor if it's not already
+y <- as.factor(y)
+
+# Split the data into training and testing sets
+train_indices <- sample(1:nrow(X), 0.7 * nrow(X))
+X_train <- X[train_indices, ]
+X_test <- X[-train_indices, ]
+y_train <- y[train_indices]
+y_test <- y[-train_indices]
+
+# Perform multinomial LASSO
+lasso_model <- glmnet(X_train, y_train, alpha = 1, family = "multinomial")
+
+# Cross-validation to select the best lambda
+cv_lasso <- cv.glmnet(X_train, y_train, alpha = 1, family = "multinomial")
+best_lambda <- cv_lasso$lambda.min
+
+# Make predictions on the test set
+predictions <- predict(lasso_model, s = best_lambda, newx = X_test, type = "class")
+
+# Evaluate the model
+accuracy <- mean(predictions == y_test)
+cat("Accuracy:", accuracy, "\n")
+
+# Get the coefficients of the LASSO model
+coef_lasso <- coef(lasso_model, s = best_lambda)
+print(coef_lasso)
+```
+
+1.  Accuracy:
+
+    -   The accuracy of the model is 0.6315789, which means that the model correctly predicts the class label for approximately 63.16% of the instances in the test set.
+
+    -   In other words, out of all the instances in the test set, the model correctly classifies 63.16% of them into their respective categories.
+
+    -   An accuracy of 63.16% suggests that the model's performance is relatively good, indicating that it can predict the categories with a fair level of accuracy based on the given predictor variables.
+
+2.  Coefficients:
+
+    -   The coefficients are presented for each category of the target variable (not specified in the output).
+
+    -   There are four sets of coefficients, corresponding to the different categories (labeled as "1", "2", "3", and "4").
+
+    -   Each set of coefficients represents the change in the log-odds of the respective category relative to a reference category (usually the first or last category) for a unit change in the corresponding predictor variable.
+
+    -   The "(Intercept)" term represents the baseline log-odds for each category when all predictor variables are zero.
+
+    -   The coefficients with a value of "." indicate that the corresponding predictor variable has been excluded from the model for that specific category due to the LASSO regularization.
+
+Interpretation of coefficients for each category:
+
+-   Category "1":
+
+    -   The intercept is 0.7683668, indicating the baseline log-odds for category "1".
+
+    -   C3 has a negative coefficient of -0.4405856, suggesting that a higher value of C3 decreases the log-odds of an instance belonging to category "1" relative to the reference category.
+
+    -   All other predictor variables have been excluded from the model for category "1".
+
+-   Category "2":
+
+    -   The intercept is 1.496660527, indicating the baseline log-odds for category "2".
+
+    -   C1, C2, C3, C7, C9, and C12 have negative coefficients, indicating that higher values of these variables decrease the log-odds of an instance belonging to category "2" relative to the reference category.
+
+    -   Other predictor variables have been excluded from the model for category "2".
+
+-   Category "3":
+
+    -   The intercept is 0.277261921, indicating the baseline log-odds for category "3".
+
+    -   C1 and C3 have positive coefficients, suggesting that higher values of these variables increase the log-odds of an instance belonging to category "3" relative to the reference category.
+
+    -   C6 has a negative coefficient, indicating that a higher value of C6 decreases the log-odds of category "3".
+
+    -   Other predictor variables have been excluded from the model for category "3".
+
+-   Category "4":
+
+    -   The intercept is -2.5422893, indicating the baseline log-odds for category "4".
+
+    -   C3, C5, C7, C8, and C10 have positive coefficients, suggesting that higher values of these variables increase the log-odds of an instance belonging to category "4" relative to the reference category.
+
+    -   Other predictor variables have been excluded from the model for category "4".
+
+Overall, the results suggest that the multinomial LASSO model has a relatively good accuracy of 63.16% in predicting the categories based on the given predictor variables (C1 to C15). The coefficients provide insights into the impact of each predictor variable on the log-odds of each category relative to the reference category. The model has identified some predictor variables as significant contributors to the prediction of each category, while excluding others through the LASSO regularization. The specific interpretation of the coefficients depends on the context and meaning of each predictor variable in relation to the target variable.
+
+Feature importance plot for question E12
+
+```{r}
+var_imp_list <- lapply(coef_lasso, function(class_coef) {
+  var_names <- rownames(class_coef)
+  var_coefs <- as.numeric(class_coef[, 1])
+  
+  # Remove the intercept if present
+  intercept_index <- which(var_names == "(Intercept)")
+  if (length(intercept_index) > 0) {
+    var_names <- var_names[-intercept_index]
+    var_coefs <- var_coefs[-intercept_index]
+  }
+  
+  data.frame(Variable = var_names, Coefficient = var_coefs)
+})
+
+# Combine the variable importance scores from all classes
+var_imp <- do.call(rbind, var_imp_list)
+
+# Group by variable and sum the coefficients
+var_imp <- aggregate(Coefficient ~ Variable, data = var_imp, FUN = sum)
+
+# Sort the variables by their absolute coefficient values in descending order
+var_imp <- var_imp[order(abs(var_imp$Coefficient), decreasing = TRUE), ]
+
+
+# Create a horizontal bar plot
+barplot(var_imp$Coefficient, names.arg = var_imp$Variable, 
+        xlab = "Coefficient", ylab = "Variable",
+        main = "Variable Importance Scores (LASSO)",
+        col = ifelse(var_imp$Coefficient > 0, "blue", "red"),
+        horiz = TRUE, las = 1, cex.names = 0.8)
+legend("topright", legend = c("Positive", "Negative"), 
+       fill = c("blue", "red"), cex = 0.8)
+```
+
+Random Forest model for target E12
+
+```{r}
+#install.packages("randomForest")
+library(randomForest)
+
+# Prepare the feature matrix X
+X <- model.matrix(~ C1 + C2 + C3 + C4 + C5 + C6 + C7 + C8 + C9 + C10 +
+                    C11 + C12 + C13 + C14 + C15 - 1, data = playerData)
+
+# Prepare the target variable y
+y <- playerData$E12
+
+# Convert the target variable to a factor if it's not already
+y <- as.factor(y)
+
+# Split the data into training and testing sets
+train_indices <- sample(1:nrow(X), 0.7 * nrow(X))
+X_train <- X[train_indices, ]
+X_test <- X[-train_indices, ]
+y_train <- y[train_indices]
+y_test <- y[-train_indices]
+
+# Train the random forest model
+rf_model <- randomForest(x = X_train, y = y_train, ntree = 500, importance = TRUE)
+
+# Make predictions on the test set
+predictions <- predict(rf_model, newdata = X_test)
+
+# Evaluate the model
+accuracy <- mean(predictions == y_test)
+cat("Accuracy:", accuracy, "\n")
+
+# Print the model summary
+print(rf_model)
+
+# Get variable importance
+importance_scores <- importance(rf_model)
+print(importance_scores)
+
+varImpPlot(rf_model, main = "Variable Importance Plot")
+```
+
+1.  Accuracy:
+
+    -   The accuracy of the model is 0.7, which means that the model correctly predicts the class label for 70% of the instances in the test set.
+
+2.  Model summary:
+
+    -   The model is a classification random forest with 500 trees.
+
+    -   At each split, 3 variables are tried randomly.
+
+    -   The OOB (out-of-bag) estimate of the error rate is 34.39%, indicating that around 34.39% of the instances are misclassified when using the OOB samples.
+
+3.  Confusion matrix:
+
+    -   The confusion matrix shows the number of instances predicted for each class versus the actual class.
+
+    -   For class 1, 1 instance is correctly classified, while 1 is misclassified as class 2, 3 as class 3, and 18 as class 4. The class error for class 1 is 0.95652174.
+
+    -   For class 2, 13 instances are correctly classified, while 6 are misclassified as class 3, and 26 as class 4. The class error for class 2 is 0.71111111.
+
+    -   For class 3, 23 instances are correctly classified, while 6 are misclassified as class 2, and 71 as class 4. The class error for class 3 is 0.77000000.
+
+    -   For class 4, 253 instances are correctly classified, while 2 are misclassified as class 1, 3 as class 2, and 16 as class 3. The class error for class 4 is 0.07664234.
+
+4.  Variable importance:
+
+    -   The variable importance measures are provided in the last two columns: MeanDecreaseAccuracy and MeanDecreaseGini.
+
+    -   MeanDecreaseAccuracy indicates the average decrease in accuracy when a variable is excluded from the model. Higher values suggest more important variables.
+
+    -   MeanDecreaseGini measures the average decrease in Gini impurity when a variable is used for splitting. Higher values indicate more important variables.
+
+    -   Based on the MeanDecreaseAccuracy, the top important variables are C10, C8, C2, C15, and C3.
+
+    -   Based on the MeanDecreaseGini, the top important variables are C10, C8, C2, C4, and C11.
+
+Interpretation:
+
+-   The model has an accuracy of 70%, which indicates that it performs reasonably well in predicting the class labels for the test set.
+
+-   The OOB error rate of 34.39% suggests that the model has some room for improvement in terms of overall accuracy.
+
+-   The confusion matrix shows that the model performs well in predicting class 4, with a low class error of 0.07664234. However, it struggles with predicting the other classes, particularly class 1, which has a high class error of 0.95652174.
+
+-   The variable importance measures highlight the variables that contribute the most to the model's predictions. C10, C8, and C2 appear to be the most important variables based on both MeanDecreaseAccuracy and MeanDecreaseGini.
+
+Feature Partial Dependence plot
+
+```{r}
+# Train the random forest model (assuming you have already done this)
+rf_model <- randomForest(x = X_train, y = y_train, ntree = 500, importance = TRUE)
+
+# Select the features for which you want to create partial dependence plots
+selected_features <- c("C2", "C3", "C8", "C10", "C15")
+
+# Create partial dependence plots for the selected features
+par(mfrow = c(1, length(selected_features)))  # Arrange plots in a single row
+
+for (feature in selected_features) {
+  pd_values <- seq(min(X_train[, feature]), max(X_train[, feature]), length.out = 100)
+  
+  pd_data <- data.frame(X_train[rep(1, length(pd_values)), ])  # Create a data frame with all variables
+  pd_data[, feature] <- pd_values  # Update the selected feature values
+  
+  pd_pred <- predict(rf_model, newdata = pd_data, type = "prob")
+  
+  plot(pd_values, pd_pred[, 2], type = "l", main = paste("Partial Dependence Plot -", feature),
+       xlab = feature, ylab = "Partial Dependence")
+}
+```
+
+Confusion matrix:
+
+```{r}
+library(randomForest)
+library(caret)
+# Train the random forest model (assuming you have already done this)
+rf_model <- randomForest(x = X_train, y = y_train, ntree = 500, importance = TRUE)
+
+# Make predictions on the test set
+predictions <- predict(rf_model, newdata = X_test)
+
+# Create the confusion matrix using the table() function
+conf_matrix <- table(predictions, y_test)
+print(conf_matrix)
+
+# Create a more detailed summary using the confusionMatrix() function
+conf_matrix_summary <- confusionMatrix(predictions, y_test)
+print(conf_matrix_summary)
+```
+
+Try to increase number of trees from 500 to 1000
+
+```{r}
+# Train the random forest model
+rf_model <- randomForest(x = X_train, y = y_train, ntree = 1000, importance = TRUE)
+
+# Make predictions on the test set
+predictions <- predict(rf_model, newdata = X_test)
+
+# Evaluate the model
+accuracy <- mean(predictions == y_test)
+cat("Accuracy:", accuracy, "\n")
+
+# Print the model summary
+print(rf_model)
+
+# Get variable importance
+importance_scores <- importance(rf_model)
+print(importance_scores)
+```
+
+1.  Accuracy:
+
+    -   The accuracy of the model is still 0.7, which means that the model correctly predicts the class label for 70% of the instances in the test set. Increasing the number of trees from 500 to 1000 did not change the overall accuracy.
+
+2.  Model summary:
+
+    -   The model is a classification random forest with 1000 trees.
+
+    -   At each split, 3 variables are tried randomly.
+
+    -   The OOB (out-of-bag) estimate of the error rate is 35.75%, indicating that around 35.75% of the instances are misclassified when using the OOB samples. This is slightly higher than the previous model with 500 trees (34.39%).
+
+3.  Confusion matrix:
+
+    -   The confusion matrix shows the number of instances predicted for each class versus the actual class.
+
+    -   The confusion matrix remains the same as the previous model, suggesting that increasing the number of trees did not significantly change the class-wise predictions.
+
+    -   The class errors for each class are the same as before.
+
+4.  Variable importance:
+
+    -   The variable importance measures are provided in the last two columns: MeanDecreaseAccuracy and MeanDecreaseGini.
+
+    -   Based on the MeanDecreaseAccuracy, the top important variables are C10, C8, C2, C3, and C5.
+
+    -   Based on the MeanDecreaseGini, the top important variables are C10, C8, C2, C14, and C11.
+
+    -   The variable importance ranking is slightly different compared to the previous model with 500 trees.
+
+Interpretation:
+
+-   Increasing the number of trees from 500 to 1000 did not improve the overall accuracy of the model, which remains at 70%.
+
+-   The OOB error rate slightly increased from 34.39% to 35.75%, suggesting that the additional trees did not enhance the model's performance on the out-of-bag samples.
+
+-   The confusion matrix remains unchanged, indicating that the class-wise predictions are similar to the previous model.
+
+-   The variable importance measures still highlight C10, C8, and C2 as the most important variables based on both MeanDecreaseAccuracy and MeanDecreaseGini. However, the ranking of other variables has slightly changed.
+
+Considerations:
+
+-   Since increasing the number of trees did not improve the model's performance, it suggests that the model might have already reached its limit in terms of capturing the patterns in the data with the given set of predictor variables.
+
+-   The high class errors for classes 1, 2, and 3 indicate that the model struggles to accurately predict these classes. This could be due to class imbalance, lack of discriminative features, or overlapping class boundaries.
+
+-   To further improve the model's performance, you may want to focus on feature engineering, data preprocessing, or exploring other modeling techniques that can handle the specific characteristics of your dataset.
+
+Let's try Boosting
+
+```{r}
+# Install and load the gbm package
+#install.packages("gbm")
+library(gbm)
+
+# Prepare the feature matrix X
+X <- model.matrix(~ C1 + C2 + C3 + C4 + C5 + C6 + C7 + C8 + C9 + C10 +
+                    C11 + C12 + C13 + C14 + C15 - 1, data = playerData)
+
+# Prepare the target variable y
+y <- playerData$E12
+
+# Convert the target variable to a factor if it's not already
+y <- as.factor(y)
+
+# Split the data into training and testing sets
+train_indices <- sample(1:nrow(X), 0.7 * nrow(X))
+X_train <- X[train_indices, ]
+X_test <- X[-train_indices, ]
+y_train <- y[train_indices]
+y_test <- y[-train_indices]
+
+# Train the gradient boosting model
+gb_model <- gbm(y_train ~ ., data = data.frame(X_train), 
+                distribution = "multinomial",
+                n.trees = 100,
+                interaction.depth = 3,
+                shrinkage = 0.1,
+                cv.folds = 5,
+                verbose = FALSE)
+
+# Make predictions on the test set
+predictions <- predict(gb_model, newdata = data.frame(X_test), 
+                       n.trees = gb_model$n.trees,
+                       type = "response")
+
+# Convert predicted probabilities to class labels
+predicted_labels <- colnames(predictions)[apply(predictions, 1, which.max)]
+
+# Evaluate the model
+accuracy <- mean(predicted_labels == y_test)
+cat("Accuracy:", accuracy, "\n")
+
+# Print the model summary
+print(gb_model)
+
+# Get variable importance
+importance_scores <- summary(gb_model, plotit = FALSE)
+print(importance_scores)
+```
+
+Getting this error
+
+```         
+Warning: Setting `distribution = "multinomial"` is ill-advised as it is currently broken. It exists only for backwards compatibility. Use at your own risk
+```
+
+Trying using the caret library.
+
+```{r}
+library(caret)
+
+# Prepare the feature matrix X and target variable y
+X <- playerData[, c("C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10",
+                    "C11", "C12", "C13", "C14", "C15")]
+
+y <- playerData$E12
+
+# Convert the target variable to a factor if it's not already
+y <- as.factor(y)
+
+# Split the data into training and testing sets
+set.seed(1)
+trainIndex <- createDataPartition(y, p = 0.7, list = FALSE)
+X_train <- X[trainIndex, ]
+X_test <- X[-trainIndex, ]
+y_train <- y[trainIndex]
+y_test <- y[-trainIndex]
+
+# Define the training control
+ctrl <- trainControl(method = "cv", number = 5, verboseIter = FALSE)
+
+# Train the gradient boosting model
+gb_model <- train(x = X_train, y = y_train,
+                  method = "gbm",
+                  trControl = ctrl,
+                  verbose = FALSE)
+
+# Make predictions on the test set
+predictions <- predict(gb_model, newdata = X_test)
+
+# Evaluate the model
+accuracy <- sum(predictions == y_test) / length(y_test)
+cat("Accuracy:", accuracy, "\n")
+
+# Print the model summary
+print(gb_model)
+
+# Get variable importance
+importance_scores <- varImp(gb_model)
+print(importance_scores)
+```
+
+1.  Accuracy:
+
+    -   The accuracy of the gradient boosting model on the test set is 0.6382979, which means that approximately 63.83% of the predictions made by the model on the test set are correct.
+
+2.  Model Summary:
+
+    -   The model was trained using Stochastic Gradient Boosting (gbm) with 5-fold cross-validation.
+
+    -   The dataset has 444 samples and 15 predictor variables.
+
+    -   The target variable has 4 classes: '1', '2', '3', and '4'.
+
+    -   No pre-processing was applied to the data.
+
+    -   The model was tuned across different combinations of hyperparameters:
+
+        -   interaction.depth: The maximum depth of variable interactions (values: 1, 2, 3).
+
+        -   n.trees: The number of trees to fit (values: 50, 100, 150).
+
+        -   shrinkage: The learning rate (held constant at 0.1).
+
+        -   n.minobsinnode: The minimum number of observations in the terminal nodes (held constant at 10).
+
+    -   The optimal model was selected based on the highest accuracy.
+
+    -   The final model has the following hyperparameters: n.trees = 50, interaction.depth = 1, shrinkage = 0.1, and n.minobsinnode = 10.
+
+3.  Variable Importance:
+
+    -   The variable importance scores indicate the relative importance of each predictor variable in the model.
+
+    -   The scores are scaled to have a maximum value of 100, with higher values indicating higher importance.
+
+    -   In this case, the variable "C10" has the highest importance score of 100, followed by "C8" with a score of 52.86, "C7" with a score of 43.18, and so on.
+
+    -   The variable "C15" has an importance score of 0, indicating that it does not contribute to the model's predictions.
+
+Interpretation:
+
+-   The gradient boosting model achieved an accuracy of 63.83% on the test set, which suggests that it has a moderate level of performance in predicting the target variable based on the given predictor variables.
+
+-   The model's performance was optimized through cross-validation and hyperparameter tuning, with the optimal model having specific settings for interaction depth, number of trees, learning rate, and minimum observations in terminal nodes.
+
+-   The variable importance scores provide insights into which predictor variables are most influential in the model's predictions. In this case, "C10", "C8", and "C7" are the top three most important variables, while "C15" has no impact on the predictions.
+
+To further improve the model's performance, you could consider the following:
+
+-   Explore different hyperparameter settings or use a more extensive grid search to find the optimal combination.
+
+-   Investigate the relationship between the important predictor variables and the target variable to gain insights into the underlying patterns.
+
+-   Consider feature engineering techniques to create new informative features or transform existing ones.
+
+-   Evaluate the model's performance using additional metrics such as precision, recall, and F1-score, especially if the classes are imbalanced.
+
+Confusion Matrix:
+
+```{r}
+conf_matrix <- confusionMatrix(predictions, y_test)
+print(conf_matrix)
+```
+
+Variable importance plot
+
+```{r}
+library(ggplot2)
+
+# Convert importance scores to a data frame
+importance_df <- data.frame(Variable = rownames(importance_scores$importance),
+                            Importance = importance_scores$importance$Overall)
+
+# Create the variable importance plot using ggplot2
+ggplot(importance_df, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(x = "Variable", y = "Importance") +
+  ggtitle("Variable Importance Plot")
+```
+
+Training and Validation Accuracy Plot
+
+```         
+```
